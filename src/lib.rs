@@ -3,7 +3,9 @@
 use std::ops::{Add, Sub, Mul};
 
 #[derive(Debug, Eq, PartialEq)]
+/// Error types for the matrix library
 pub enum VectorError {
+    /// This variant is thrown when the vectors shapes do not match
     ShapeMismatch,
 }
 
@@ -47,6 +49,7 @@ where
 
     /// Adds two vectors
     ///
+    /// # Errors
     /// Returns Err(VectorError::ShapeMismatch) if the vectors have different shapes
     pub fn add(&'a self, rhs: &'a Vector<T>) -> Result<Vector<T>, VectorError> {
         if self.shape() != rhs.shape() {
@@ -65,6 +68,7 @@ where
 
     /// Substracts two vectors
     ///
+    /// # Errors
     /// Returns Err(VectorError::ShapeMismatch) if the vectors have different shapes
     pub fn sub(&'a self, rhs: &'a Vector<T>) -> Result<Vector<T>, VectorError> {
         if self.shape() != rhs.shape() {
