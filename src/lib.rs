@@ -105,12 +105,33 @@ where
     }
 }
 
+// Potential TODO: Make the mul operation commutative. Seems to require lots of boilerplate code (like below) or advanced macros
+// impl Mul<&Vector<f32>> for f32
+// {
+//     type Output = Vector<f32>;
+
+//     fn mul(self, rhs: &Vector<f32>) -> Self::Output {
+//         rhs * self
+//     }
+// }
+
+// This would be cool but it doesn't work in rust...
+// See RFC 2451
+// impl<T> Mul<&Vector<T>> for T {
+//     type Output = Vector<T>;
+
+//     fn mul(self, rhs: &Vector<T>) -> Self::Output {
+//         rhs * self
+//     }
+// }
+
 /// Generic linear combination
 pub fn linear_combination<T>(vectors: &[Vector<T>], coefficients: &[T]) -> Vector<T>
 where
-    T: Copy + Default + Add + Mul + std::fmt::Debug,
+    T: Copy + Default + Add + Mul,
     Vec<T>: FromIterator<<T as Mul>::Output> + FromIterator<<T as Add>::Output>,
 {
+    // Check for errors
     assert_eq!(
         vectors.len(),
         coefficients.len(),
@@ -135,40 +156,20 @@ where
         shape: vector_shape,
     };
 
-    // Compute the scaled vectors
+    // Compute scaled vectors
     let scaled_vectors: Vec<Vector<T>> = coefficients
         .iter()
         .zip(vectors)
         .map(|(&coefficient, vector)| vector * coefficient)
         .collect();
 
-    println!("scaled_vectors: {:?}", scaled_vectors);
-
+    // Accumulate scaled vectors
     scaled_vectors
         .iter()
         .fold(result, |acc, scaled_vector| &acc + scaled_vector)
 }
 
-
-// Potential TODO: Make the mul operation commutative. Seems to require lots of boilerplate code (like below) or advanced macros
-// impl Mul<&Vector<f32>> for f32
-// {
-//     type Output = Vector<f32>;
-
-//     fn mul(self, rhs: &Vector<f32>) -> Self::Output {
-//         rhs * self
-//     }
-// }
-
-// This would be cool but it doesn't work in rust...
-// See RFC 2451
-// impl<T> Mul<&Vector<T>> for T {
-//     type Output = Vector<T>;
-
-//     fn mul(self, rhs: &Vector<T>) -> Self::Output {
-//         rhs * self
-//     }
-// }
+// =============================================TESTS================================================
 
 #[cfg(test)]
 mod tests {
