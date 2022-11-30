@@ -1,6 +1,24 @@
 // #![allow(dead_code)]
+// #![feature(portable_simd)]
 
 use std::ops::{Add, Mul, Sub};
+// use std::simd::Simd;
+
+pub trait Int {}
+pub trait Float {}
+
+impl Float for f64 {}
+impl Float for f32 {}
+impl Int for i64 {}
+impl Int for i32 {}
+impl Int for i16 {}
+impl Int for i8 {}
+impl Int for isize {}
+impl Int for u64 {}
+impl Int for u32 {}
+impl Int for u16 {}
+impl Int for u8 {}
+impl Int for usize {}
 
 /// A vector designed for linear algebra operations
 #[derive(Debug, Eq, PartialEq, PartialOrd, Ord, Clone)]
@@ -125,49 +143,121 @@ where
 //     }
 // }
 
-/// Generic linear combination
-pub fn linear_combination<T>(vectors: &[Vector<T>], coefficients: &[T]) -> Vector<T>
+pub trait LinearCombination<'a> {
+    type Coefficients;
+    type LinearCombinationResult;
+
+    fn linear_combination(
+        &'a self,
+        coefficients: Self::Coefficients,
+    ) -> Self::LinearCombinationResult;
+}
+
+impl<'a, T> LinearCombination<'a> for [Vector<T>]
 where
-    T: Copy + Default + Add + Mul,
+    T: 'a + Default + Int + Copy + Add + Mul + Sub,
     Vec<T>: FromIterator<<T as Mul>::Output> + FromIterator<<T as Add>::Output>,
 {
-    // Check for errors
-    assert_eq!(
-        vectors.len(),
-        coefficients.len(),
-        "Length mismatch between {:?} vectors and {:?} coefficients",
-        vectors.len(),
-        coefficients.len()
-    );
-    let vector_shape = vectors[0].shape();
-    for vector in vectors {
+    type Coefficients = &'a [T];
+    type LinearCombinationResult = Vector<T>;
+
+    fn linear_combination(
+        &'a self,
+        coefficients: Self::Coefficients,
+    ) -> Self::LinearCombinationResult {
+        // Check for errors
         assert_eq!(
-            vector.shape(),
-            vector_shape,
-            "Shape mismatch: vector of shape {:?} can't be combined to vector of shape {:?}",
-            vector.shape(),
-            vector_shape
-        )
+            self.len(),
+            coefficients.len(),
+            "Length mismatch between {:?} vectors and {:?} coefficients",
+            self.len(),
+            coefficients.len()
+        );
+        let vector_shape = self[0].shape();
+        for vector in self {
+            assert_eq!(
+                vector.shape(),
+                vector_shape,
+                "Shape mismatch: vector of shape {:?} can't be combined to vector of shape {:?}",
+                vector.shape(),
+                vector_shape
+            )
+        }
+
+        // Create the result vector initialized with default values (0 for number types)
+        let result = Vector {
+            scalars: vec![T::default(); vector_shape.0],
+            shape: vector_shape,
+        };
+
+        // Compute scaled vectors
+        let scaled_vectors: Vec<Vector<T>> = coefficients
+            .iter()
+            .zip(self)
+            .map(|(&coefficient, vector)| vector * coefficient)
+            .collect();
+
+        // Accumulate scaled vectors
+        scaled_vectors
+            .iter()
+            .fold(result, |acc, scaled_vector| &acc + scaled_vector)
     }
-
-    // Create the result vector initialized with default values (0 for number types)
-    let result = Vector {
-        scalars: vec![T::default(); vector_shape.0],
-        shape: vector_shape,
-    };
-
-    // Compute scaled vectors
-    let scaled_vectors: Vec<Vector<T>> = coefficients
-        .iter()
-        .zip(vectors)
-        .map(|(&coefficient, vector)| vector * coefficient)
-        .collect();
-
-    // Accumulate scaled vectors
-    scaled_vectors
-        .iter()
-        .fold(result, |acc, scaled_vector| &acc + scaled_vector)
 }
+
+impl<'a> LinearCombination<'a> for [Vector<f32>] {
+    type Coefficients = &'a [f32];
+    type LinearCombinationResult = Vector<f32>;
+
+    fn linear_combination(
+        &'a self,
+        coefficients: Self::Coefficients,
+    ) -> Self::LinearCombinationResult {
+        // Check for errors
+        assert_eq!(
+            self.len(),
+            coefficients.len(),
+            "Length mismatch between {:?} vectors and {:?} coefficients",
+            self.len(),
+            coefficients.len()
+        );
+        let vector_shape = self[0].shape();
+        for vector in self {
+            assert_eq!(
+                vector.shape(),
+                vector_shape,
+                "Shape mismatch: vector of shape {:?} can't be combined to vector of shape {:?}",
+                vector.shape(),
+                vector_shape
+            )
+        }
+
+        // Create the result vector initialized with default values (0 for number types)
+        let result: Vector<f32> = Vector {
+            scalars: vec![0.; vector_shape.0],
+            shape: vector_shape,
+        };
+
+        // Compute scaled vectors
+        let scaled_vectors: Vec<Vector<f32>> = coefficients
+            .iter()
+            .zip(self)
+            .map(|(&coefficient, vector)| vector * coefficient)
+            .collect();
+
+        // Accumulate scaled vectors
+        scaled_vectors
+            .iter()
+            .fold(result, |acc, scaled_vector| &acc + scaled_vector)
+    }
+}
+
+// pub fn linear_combination<V, T>(vectors: V, coefficients: &[T]) -> Vector<T>
+// where
+//     for <'a> V: LinearCombination<'a>,
+//     T: Copy
+// {
+//     vectors.linear_combination(*coefficients)
+// }
 
 // =============================================TESTS================================================
 
@@ -195,8 +285,8 @@ mod tests {
 
     #[test]
     fn check_addition() {
-        let my_vector1 = Vector::from(&[0_f32, 1.0, 2.0, 3.0]);
-        let my_vector2 = Vector::from(&[0_f32, 1.0, 2.0, 3.0]);
+        let my_vector1: Vector<f32> = Vector::from(&[0., 1.0, 2.0, 3.0]);
+        let my_vector2 = Vector::from(&[0., 1.0, 2.0, 3.0]);
         let my_vector_result1 = &my_vector1 + &my_vector2;
 
         assert_eq!(my_vector_result1, Vector::from(&[0_f32, 2.0, 4.0, 6.0]));
@@ -253,10 +343,15 @@ mod tests {
 
     #[test]
     fn check_linear_combination() {
-        let v1 = Vector::from(&[1_f32, 2., 3.]);
-        let v2 = Vector::from(&[0_f32, 10., -100.]);
-        let result = linear_combination(&[v1, v2], &[10., -2.]);
+        let v1: Vector<f32> = Vector::from(&[1., 2., 3.]);
+        let v2 = Vector::from(&[0., 10., -100.]);
+        let result = [v1, v2].linear_combination(&[10., -2.]);
 
-        assert_eq!(result, Vector::from(&[10_f32, 0., 230.]));
+        let v3: Vector<i32> = Vector::from(&[1, 2, 3]);
+        let v4 = Vector::from(&[0, 10, -100]);
+        let result2 = [v3, v4].linear_combination(&[10, -2]);
+
+        assert_eq!(result, Vector::<f32>::from(&[10., 0., 230.]));
+        assert_eq!(result2, Vector::<i32>::from(&[10, 0, 230]));
     }
 }
