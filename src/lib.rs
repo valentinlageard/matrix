@@ -1,8 +1,9 @@
 // #![allow(dead_code)]
-// #![feature(portable_simd)]
+#![feature(portable_simd)]
 
+use std::arch::x86_64::{__m128, _mm_fmadd_ps, _mm_set1_ps, _mm_set_ps, _mm_setzero_ps};
 use std::ops::{Add, Mul, Sub};
-// use std::simd::Simd;
+use std::simd::f32x4;
 
 pub trait Int {}
 pub trait Float {}
@@ -123,7 +124,7 @@ where
     }
 }
 
-// Potential TODO: Make the mul operation commutative. Seems to require lots of boilerplate code (like below) or advanced macros
+// Potential TODO: Make the mul operation commutative. Seems to require lots of boilerplate code (like below) oradvanced macros
 // impl Mul<&Vector<f32>> for f32
 // {
 //     type Output = Vector<f32>;
@@ -231,32 +232,71 @@ impl<'a> LinearCombination<'a> for [Vector<f32>] {
             )
         }
 
-        // Create the result vector initialized with default values (0 for number types)
-        let result: Vector<f32> = Vector {
-            scalars: vec![0.; vector_shape.0],
-            shape: vector_shape,
-        };
-
-        // Compute scaled vectors
-        let scaled_vectors: Vec<Vector<f32>> = coefficients
-            .iter()
-            .zip(self)
-            .map(|(&coefficient, vector)| vector * coefficient)
-            .collect();
-
-        // Accumulate scaled vectors
-        scaled_vectors
-            .iter()
-            .fold(result, |acc, scaled_vector| &acc + scaled_vector)
+        // Create an accums vector to store the accumulating results
+        let n_accums = self[0].shape.0 / 4 + (self[0].shape.0 % 4 == 0) as usize;
+        let mut accums = (0..n_accums + 1)
+            .map(|_| unsafe { _mm_setzero_ps() })
+            .collect::<Vec<__m128>>();
+        // For each accum
+        for scalar_row in (0..self[0].shape.0).step_by(4) {
+            // For each coefficient
+            let accum = &mut accums[scalar_row / 4];
+            for (v_idx, &coefficient) in coefficients.iter().enumerate() {
+                println!("v_idx: {:?}, coefficient: {:?}", v_idx, coefficient);
+                // Pack coefficient and self' scalars
+                let packed_coefficient = unsafe { _mm_set1_ps(coefficient) };
+                // TODO: We could isolate the remainder's logic from the chunk's logic so we don't
+                // need to get/copy/unwrap for the valid chunks
+                let packed_vector_scalars = unsafe {
+                    _mm_set_ps(
+                        self[v_idx]
+                            .scalars
+                            .get(scalar_row + 3)
+                            .copied()
+                            .unwrap_or_default(),
+                        self[v_idx]
+                            .scalars
+                            .get(scalar_row + 2)
+                            .copied()
+                            .unwrap_or_default(),
+                        self[v_idx]
+                            .scalars
+                            .get(scalar_row + 1)
+                            .copied()
+                            .unwrap_or_default(),
+                        self[v_idx]
+                            .scalars
+                            .get(scalar_row)
+                            .copied()
+                            .unwrap_or_default(),
+                    )
+                };
+                // Perform fused multiply accumulate
+                *accum = unsafe { _mm_fmadd_ps(packed_vector_scalars, packed_coefficient, *accum) };
+            }
+        }
+        // Convert back to a vector
+        // TODO: There may be a better way to convert back ?
+        let mut result= Vector::<f32>::from(&vec![0.; self[0].shape.0]);
+        for (i, &accum) in accums.iter().enumerate() {
+            let accum = f32x4::from(accum).to_array().to_vec();
+            for (j, &accum_value) in accum.iter().enumerate() {
+                if i * 4 + j > result.shape.0 - 1 {
+                    break;
+                }
+                result.scalars[i * 4 + j] = accum_value;
+            }
+        }
+        result
     }
 }
 
-// pub fn linear_combination<V, T>(vectors: V, coefficients: &[T]) -> Vector<T>
+// pub fn linear_combination<'a, T>(vectors: &'a [Vector<T>], coefficients: &'a [T])
 // where
-//     for <'a> V: LinearCombination<'a>,
-//     T: Copy
+//     T: Copy,
+//     Vector<T>: LinearCombination<'a>,
 // {
-//     vectors.linear_combination(*coefficients)
+//     vectors.linear_combination(coefficients);
 // }
 
 // =============================================TESTS================================================
