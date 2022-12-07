@@ -17,4 +17,20 @@
     - I think yes because in place is less practical but can be a bit more efficient because we don't need to allocate a new internal vec. In place methods can be either consuming the vector or mutably borrowing it. What is best ?
     - Pure implementations can however be chained more easily.
     - Only PURE implementations !
-- [ ] Ideally we would need a benchmark environment to check empirically for the complexity requirements. We could make a python script that executes various versions of the programs, collect the data and print nice graphs with matplotlib.
+- [x] Ideally we would need a benchmark environment to check empirically for the complexity requirements.
+    - We could make a python script that executes various versions of the programs, collect the data and print nice graphs with matplotlib.
+    - Or we could set up the criterion package !
+
+## TODO
+
+Generalities:
+- [ ] Set up a benchmark environment to test complexity and optimizations.
+
+Vector:
+- [x] Create a vector struct with basic operations: add, mul, sub, scale.
+- [x] Implement the LinearCombination trait for slices of vectors. The f32 implementation must use fma.
+    - [ ] Some refactor may be necessary ?
+- [ ] Implement LinearInterpolation (must use fma for f32)
+- [ ] Implement dot product (must use fma for f32)
+    - [x] Generic dot product
+    - [ ] f32 fma dot product

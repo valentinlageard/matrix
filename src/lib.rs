@@ -2,8 +2,9 @@
 #![feature(portable_simd)]
 
 use std::arch::x86_64::{__m128, _mm_fmadd_ps, _mm_set1_ps, _mm_set_ps, _mm_setzero_ps};
-use std::ops::{Add, Mul, Sub};
+use std::ops::{Add, AddAssign, Mul, Sub};
 use std::simd::f32x4;
+use std::fmt::Debug;
 
 pub trait Int {}
 pub trait Float {}
@@ -233,16 +234,15 @@ impl<'a> LinearCombination<'a> for [Vector<f32>] {
         }
 
         // Create an accums vector to store the accumulating results
-        let n_accums = self[0].shape.0 / 4 + (self[0].shape.0 % 4 == 0) as usize;
+        let n_accums = self[0].shape().0 / 4 + (self[0].shape().0 % 4 == 0) as usize;
         let mut accums = (0..n_accums + 1)
             .map(|_| unsafe { _mm_setzero_ps() })
             .collect::<Vec<__m128>>();
         // For each accum
-        for scalar_row in (0..self[0].shape.0).step_by(4) {
+        for scalar_row in (0..self[0].shape().0).step_by(4) {
             // For each coefficient
             let accum = &mut accums[scalar_row / 4];
             for (v_idx, &coefficient) in coefficients.iter().enumerate() {
-                println!("v_idx: {:?}, coefficient: {:?}", v_idx, coefficient);
                 // Pack coefficient and self' scalars
                 let packed_coefficient = unsafe { _mm_set1_ps(coefficient) };
                 // TODO: We could isolate the remainder's logic from the chunk's logic so we don't
@@ -277,17 +277,48 @@ impl<'a> LinearCombination<'a> for [Vector<f32>] {
         }
         // Convert back to a vector
         // TODO: There may be a better way to convert back ?
-        let mut result= Vector::<f32>::from(&vec![0.; self[0].shape.0]);
+        let mut result = Vector::<f32>::from(&vec![0.; self[0].shape().0]);
         for (i, &accum) in accums.iter().enumerate() {
             let accum = f32x4::from(accum).to_array().to_vec();
             for (j, &accum_value) in accum.iter().enumerate() {
-                if i * 4 + j > result.shape.0 - 1 {
+                if i * 4 + j > result.shape().0 - 1 {
                     break;
                 }
                 result.scalars[i * 4 + j] = accum_value;
             }
         }
         result
+    }
+}
+
+pub trait DotProduct {
+    type Output;
+
+    fn dot_product(&self, rhs: &Self) -> Self::Output;
+}
+
+impl<T> DotProduct for Vector<T>
+where
+    T: Copy + Mul + Default + AddAssign<<T as std::ops::Mul>::Output> + Debug,
+    Vec<T>: FromIterator<<T as Mul>::Output>,
+{
+    type Output = T;
+
+    fn dot_product(&self, rhs: &Self) -> Self::Output {
+        assert_eq!(
+            self.shape(),
+            rhs.shape(),
+            "Shape mismatch: vector of shape {:?} can't be combined to vector of shape {:?}",
+            self.shape(),
+            rhs.shape()
+        );
+        self.scalars
+            .iter()
+            .zip(rhs.scalars.iter())
+            .fold(T::default(), |mut acc, (&x, &y)| {
+                acc += x * y;
+                acc
+            })
     }
 }
 
@@ -341,16 +372,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "takes time"]
-    fn check_big_addition() {
-        let my_array = (0..=100000000).map(|x| x as f32).collect::<Vec<f32>>();
-        let my_vector1 = Vector::from(&my_array);
-        let my_vector2 = Vector::from(&my_array);
-
-        let _my_vector3 = my_vector1.add(&my_vector2);
-    }
-
-    #[test]
     fn check_substraction() {
         let my_vector1 = Vector::from(&[0_f32, 1.0, 2.0, 3.0]);
         let my_vector2 = Vector::from(&[0_f32, 1.0, 2.0, 3.0]);
@@ -393,5 +414,13 @@ mod tests {
 
         assert_eq!(result, Vector::<f32>::from(&[10., 0., 230.]));
         assert_eq!(result2, Vector::<i32>::from(&[10, 0, 230]));
+    }
+
+    #[test]
+    fn check_dot_product() {
+        let v1: Vector<f32> = Vector::from(&((0..10).map(|x| x as f32).collect::<Vec<f32>>()));
+        let v2: Vector<f32> = Vector::from(&((0..10).map(|x| x as f32).collect::<Vec<f32>>()));
+
+        assert_eq!(v1.dot_product(&v2), 285.0);
     }
 }
