@@ -24,13 +24,18 @@
 ## TODO
 
 Generalities:
-- [ ] Set up a benchmark environment to test complexity and optimizations.
+- [x] Set up a benchmark environment to test complexity and optimizations.
 
 Vector:
 - [x] Create a vector struct with basic operations: add, mul, sub, scale.
-- [x] Implement the LinearCombination trait for slices of vectors. The f32 implementation must use fma.
-    - [ ] Some refactor may be necessary ?
+    - [ ] Some refactor using chunk may be better ?
+- [x] Add indexing support
+- [x] Add constructors from various types
+- [x] Add iterator support
+- [x] Implement the LinearCombination trait on slices of vectors. The f32 implementation must use fma.
 - [ ] Implement LinearInterpolation (must use fma for f32)
 - [ ] Implement dot product (must use fma for f32)
     - [x] Generic dot product
     - [ ] f32 fma dot product
+- [ ] Organiser le code en au moins 2 modules: Vector et Matrix
+- [ ] Séparer les unit tests dans des fichiers spéciaux
