@@ -2,9 +2,10 @@
 #![feature(portable_simd)]
 
 use std::arch::x86_64::{__m128, _mm_fmadd_ps, _mm_set1_ps, _mm_set_ps, _mm_setzero_ps};
-use std::ops::{Add, AddAssign, Mul, Sub};
-use std::simd::f32x4;
 use std::fmt::Debug;
+use std::ops::{Add, AddAssign, Index, IndexMut, Mul, Sub};
+use std::simd::f32x4;
+use std::slice::SliceIndex;
 
 pub trait Int {}
 pub trait Float {}
@@ -82,6 +83,24 @@ where
                 .collect(),
             shape: self.shape,
         }
+    }
+}
+
+impl<T, I: SliceIndex<[T]>> Index<I> for Vector<T>
+where
+    T: Copy,
+{
+    type Output = I::Output;
+
+    #[inline]
+    fn index(&self, index: I) -> &Self::Output {
+        Index::index(&*self.scalars, index)
+    }
+}
+
+impl<T, I: SliceIndex<[T]>> IndexMut<I> for Vector<T> where T: Copy {
+    fn index_mut(&mut self, index: I) -> &mut Self::Output {
+        IndexMut::index_mut(&mut *self.scalars, index)
     }
 }
 
@@ -275,6 +294,7 @@ impl<'a> LinearCombination<'a> for [Vector<f32>] {
                 *accum = unsafe { _mm_fmadd_ps(packed_vector_scalars, packed_coefficient, *accum) };
             }
         }
+
         // Convert back to a vector
         // TODO: There may be a better way to convert back ?
         let mut result = Vector::<f32>::from(&vec![0.; self[0].shape().0]);
@@ -341,6 +361,29 @@ mod tests {
         let my_vector = Vector::from(&[0_f32, 1.0, 2.0, 3.0]);
         assert_eq!(my_vector.shape(), (4,));
         assert_eq!(my_vector.size(), 4);
+    }
+
+    #[test]
+    fn check_indexing() {
+        let my_vector = Vector::from(&[0_f32, 1.0, 2.0, 3.0]);
+        assert_eq!(my_vector[0], 0.0);
+        assert_eq!(my_vector[1], 1.0);
+        assert_eq!(my_vector[2], 2.0);
+        assert_eq!(my_vector[3], 3.0);
+        assert_eq!(my_vector[0..=1], [0., 1.]);
+    }
+
+    #[test]
+    fn check_indexing_mut() {
+        let mut my_vector = Vector::from(&[0_f32, 1.0, 2.0, 3.0]);
+        my_vector[0] += 1.;
+        my_vector[1] += 2.;
+        my_vector[2] += 3.;
+        my_vector[3] += 4.;
+        assert_eq!(my_vector[0], 1.0);
+        assert_eq!(my_vector[1], 3.0);
+        assert_eq!(my_vector[2], 5.0);
+        assert_eq!(my_vector[3], 7.0);
     }
 
     #[test]
