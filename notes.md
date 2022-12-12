@@ -28,12 +28,11 @@ Generalities:
 
 Vector:
 - [x] Create a vector struct with basic operations: add, mul, sub, scale.
-    - [ ] Some refactor using chunk may be better ?
 - [x] Add indexing support
 - [x] Add constructors from various types
 - [x] Add iterator support
 - [x] Implement the LinearCombination trait on slices of vectors. The f32 implementation must use fma.
-- [ ] Implement LinearInterpolation (must use fma for f32)
+- [x] Implement LinearInterpolation (must use fma for f32)
 - [ ] Implement dot product (must use fma for f32)
     - [x] Generic dot product
     - [ ] f32 fma dot product

@@ -1,8 +1,6 @@
-use std::arch::x86_64::{__m128, _mm_fmadd_ps, _mm_set1_ps, _mm_set_ps, _mm_setzero_ps};
 use std::fmt::Debug;
-use std::iter;
 use std::ops::{Add, Index, IndexMut, Mul, Sub};
-use std::simd::f32x4;
+use std::simd::{f32x8, StdFloat};
 use std::slice;
 use std::slice::SliceIndex;
 
@@ -28,8 +26,8 @@ pub struct Vector<T>
 where
     T: Copy,
 {
-    scalars: Vec<T>,
-    shape: (usize,),
+    pub scalars: Vec<T>,
+    pub shape: (usize,),
 }
 
 // struct Matrix<T> {
@@ -307,7 +305,7 @@ pub trait LinearCombination<'a> {
 /// Generic implementation of the linear combination
 impl<'a, T> LinearCombination<'a> for [Vector<T>]
 where
-    T: 'a + Default + Int + Copy + Add + Mul + Sub + Add<Output = T> + Mul<Output = T>,
+    T: 'a + Default + Copy + Int + Add + Mul + Sub + Add<Output = T> + Mul<Output = T>,
 {
     type Coefficients = &'a [T];
     type LinearCombinationResult = Vector<T>;
@@ -372,73 +370,70 @@ impl<'a> LinearCombination<'a> for [Vector<f32>] {
             self.len(),
             coefficients.len()
         );
-        let vector_shape = self[0].shape();
+        let vector_size = self[0].size();
         for vector in self {
             assert_eq!(
-                vector.shape(),
-                vector_shape,
+                vector.size(),
+                vector_size,
                 "Shape mismatch: vector of shape {:?} can't be combined to vector of shape {:?}",
-                vector.shape(),
-                vector_shape
+                vector.size(),
+                vector_size
             )
         }
 
-        // Create an accums vector to store the accumulating results
-        let n_accums = self[0].shape().0 / 4 + (self[0].shape().0 % 4 == 0) as usize;
-        let mut accums = (0..n_accums + 1)
-            .map(|_| unsafe { _mm_setzero_ps() })
-            .collect::<Vec<__m128>>();
-        // For each accum
-        for scalar_row in (0..self[0].shape().0).step_by(4) {
-            // For each coefficient
-            let accum = &mut accums[scalar_row / 4];
-            for (v_idx, &coefficient) in coefficients.iter().enumerate() {
-                // Pack coefficient and self' scalars
-                let packed_coefficient = unsafe { _mm_set1_ps(coefficient) };
-                // TODO: We could isolate the remainder's logic from the chunk's logic so we don't
-                // need to get/copy/unwrap for the valid chunks
-                let packed_vector_scalars = unsafe {
-                    _mm_set_ps(
-                        self[v_idx]
-                            .scalars
-                            .get(scalar_row + 3)
-                            .copied()
-                            .unwrap_or_default(),
-                        self[v_idx]
-                            .scalars
-                            .get(scalar_row + 2)
-                            .copied()
-                            .unwrap_or_default(),
-                        self[v_idx]
-                            .scalars
-                            .get(scalar_row + 1)
-                            .copied()
-                            .unwrap_or_default(),
-                        self[v_idx]
-                            .scalars
-                            .get(scalar_row)
-                            .copied()
-                            .unwrap_or_default(),
-                    )
-                };
-                // Perform fused multiply accumulate
-                *accum = unsafe { _mm_fmadd_ps(packed_vector_scalars, packed_coefficient, *accum) };
+        const N_LANES: usize = 8;
+        let vector_size = self[0].size();
+
+        // Create the vector to store the result (and the partial computations !)
+        let mut result_vector = Vector {
+            scalars: vec![0.; vector_size],
+            shape: (vector_size,),
+        };
+
+        let (res_prefix, res_middle, res_suffix) = result_vector.scalars.as_simd_mut::<N_LANES>();
+
+        // For prefix results, apply normal logic
+        for (i, res) in res_prefix.iter_mut().enumerate() {
+            for (&coefficient, vector) in coefficients.iter().zip(self.iter()) {
+                *res = coefficient.mul_add(vector[i], *res);
             }
         }
 
-        // Convert back to a vector
-        // TODO: There may be a better way to convert back ?
-        let mut result = Vector::from_iter(iter::repeat(0.).take(self[0].shape().0));
-        for (i, &accum) in accums.iter().enumerate() {
-            let accum = f32x4::from(accum).to_array().to_vec();
-            for (j, &accum_value) in accum.iter().enumerate() {
-                if i * 4 + j > result.shape().0 - 1 {
-                    break;
-                }
-                result.scalars[i * 4 + j] = accum_value;
+        // For middle results, hint the compiler to use packed fma operations
+        for (i, packed_res) in res_middle.iter_mut().enumerate() {
+            // We're using wrapping ops to bypass the overflow checks
+            let slice_idx = res_prefix.len().wrapping_add(i.wrapping_mul(N_LANES));
+            *packed_res = coefficients.iter().zip(self.iter()).fold(
+                f32x8::splat(0.0),
+                |accum, (coeff, vector)| {
+                    let packed_coefficient = f32x8::splat(*coeff);
+                    // SAFETY: The vector slice is guaranteed to be valid because I did my math fine when computing the slice index
+                    // In addition, the beginning of the function asserts the vectors size
+                    let vec_slice = unsafe { &vector.scalars.get_unchecked(slice_idx..) };
+                    let packed_vec = unsafe {
+                        let mut array = [vec_slice[0]; N_LANES];
+                        let mut i = 0;
+                        while i < N_LANES {
+                            array[i] = *vec_slice.get_unchecked(i);
+                            i += 1;
+                        }
+                        f32x8::from(array)
+                    };
+                    packed_vec.mul_add(packed_coefficient, accum)
+                },
+            );
+        }
+
+        // For suffix results, apply normal logic
+        for (i, res) in res_suffix.iter_mut().enumerate() {
+            for (&coefficient, vector) in coefficients.iter().zip(self.iter()) {
+                *res = coefficient.mul_add(
+                    vector[res_prefix.len() + res_middle.len() * N_LANES + i],
+                    *res,
+                );
             }
         }
-        result
+        result_vector
     }
 }
 
@@ -604,7 +599,7 @@ mod tests {
         let my_vector1 = Vector::from(my_array1);
         let my_vector2 = Vector::from(my_array2);
         let my_vector_result1 = &my_vector1 * 2_f32;
-        // The following line doesn't compile because the relation isn't commutative right now
+        // The following line doesn't compile because the operator can't be commutatively implemented
         // let my_vector_result2 = 2_f32 * &my_vector1;
 
         assert_eq!(my_vector_result1, my_vector2);
@@ -613,16 +608,29 @@ mod tests {
 
     #[test]
     fn check_linear_combination() {
-        let v1: Vector<f32> = Vector::from([1., 2., 3.]);
-        let v2 = Vector::from([0., 10., -100.]);
-        let result = [v1, v2].linear_combination(&[10., -2.]);
+        for n_vectors in 1..20 {
+            for vector_size in 1..=100 {
+                // Check for f32
+                let vectors: Vec<Vector<f32>> = (0..n_vectors)
+                    .map(|_| Vector::from_iter((0..vector_size).map(|x| x as f32)))
+                    .collect();
+                let coefficients: Vec<f32> = vec![1.0; n_vectors];
+                let result_should_be =
+                    Vector::from_iter((0..vector_size).map(|x| (x * n_vectors) as f32));
+                let result = vectors.linear_combination(&coefficients);
+                assert_eq!(result, result_should_be);
 
-        let v3: Vector<i32> = Vector::from([1, 2, 3]);
-        let v4 = Vector::from([0, 10, -100]);
-        let result2 = [v3, v4].linear_combination(&[10, -2]);
-
-        assert_eq!(result, Vector::<f32>::from([10., 0., 230.]));
-        assert_eq!(result2, Vector::<i32>::from([10, 0, 230]));
+                // Check default implementation
+                let vectors: Vec<Vector<i32>> = (0..n_vectors)
+                    .map(|_| Vector::from_iter((0..vector_size).map(|x| x as i32)))
+                    .collect();
+                let coefficients: Vec<i32> = vec![1; n_vectors];
+                let result_should_be =
+                    Vector::from_iter((0..vector_size).map(|x| (x * n_vectors) as i32));
+                let result = vectors.linear_combination(&coefficients);
+                assert_eq!(result, result_should_be);
+            }
+        }
     }
 
     #[test]
