@@ -1,6 +1,7 @@
+use std::cmp::Ordering;
 use std::fmt::Debug;
 use std::ops::{Add, Index, IndexMut, Mul, Sub};
-use std::simd::{f32x8, StdFloat};
+use std::simd::{f32x8, SimdFloat, StdFloat};
 use std::slice;
 use std::slice::SliceIndex;
 
@@ -404,20 +405,19 @@ impl<'a> LinearCombination<'a> for [Vector<f32>] {
             // We're using wrapping ops to bypass the overflow checks
             let slice_idx = res_prefix.len().wrapping_add(i.wrapping_mul(N_LANES));
             *packed_res = coefficients.iter().zip(self.iter()).fold(
-                f32x8::splat(0.0),
+                f32x8::splat(0.),
                 |accum, (coeff, vector)| {
                     let packed_coefficient = f32x8::splat(*coeff);
                     // SAFETY: The vector slice is guaranteed to be valid because I did my math fine when computing the slice index
                     // In addition, the beginning of the function asserts the vectors size
                     let vec_slice = unsafe { &vector.scalars.get_unchecked(slice_idx..) };
                     let packed_vec = unsafe {
-                        let mut array = [vec_slice[0]; N_LANES];
-                        let mut i = 0;
-                        while i < N_LANES {
-                            array[i] = *vec_slice.get_unchecked(i);
-                            i += 1;
-                        }
-                        f32x8::from(array)
+                        slice_to_simd_f32x8_unchecked(vec_slice)
+                        // let mut array = [0.; N_LANES];
+                        // for i in 0..N_LANES {
+                        //     array[i] = *vec_slice.get_unchecked(i);
+                        // }
+                        // f32x8::from(array)
                     };
                     packed_vec.mul_add(packed_coefficient, accum)
                 },
@@ -448,7 +448,7 @@ pub trait DotProduct {
 
 impl<T> DotProduct for Vector<T>
 where
-    T: Copy + Default + Mul + Mul<Output = T> + Add<Output = T>,
+    T: Copy + Default + Int + Mul + Mul<Output = T> + Add<Output = T>,
 {
     type Output = T;
 
@@ -467,6 +467,63 @@ where
     }
 }
 
+impl DotProduct for Vector<f32> {
+    type Output = f32;
+
+    fn dot_product(&self, rhs: &Self) -> Self::Output {
+        assert_eq!(
+            self.shape(),
+            rhs.shape(),
+            "Shape mismatch: vector of shape {:?} can't be combined to vector of shape {:?}",
+            self.shape(),
+            rhs.shape()
+        );
+
+        // The naive algorithm is more efficient than the fma optimized one for vectors with size less than 16
+        match self.size().cmp(&16) {
+            // Naive algorithm
+            Ordering::Less => self
+                .scalars
+                .iter()
+                .zip(rhs.scalars.iter())
+                .fold(0., |acc, (&x, &y)| x.mul_add(y, acc)),
+            // Fma algorithm
+            _ => {
+                const N_LANES: usize = 8;
+                // Divide the vectors in chunks
+                let v1_chunks = self.scalars.chunks_exact(N_LANES);
+                let v2_chunks = rhs.scalars.chunks_exact(N_LANES);
+                let v1_remainder = v1_chunks.remainder();
+                let v2_remainder = v2_chunks.remainder();
+                // Multiply each chunk and accumulate then reduce to a sum
+                let chunk_result = v1_chunks
+                    .zip(v2_chunks)
+                    .fold(f32x8::splat(0.), |accum, (v1_chunk, v2_chunk)| {
+                        let v1_simd = unsafe { slice_to_simd_f32x8_unchecked(v1_chunk) };
+                        let v2_simd = unsafe { slice_to_simd_f32x8_unchecked(v2_chunk) };
+                        v1_simd.mul_add(v2_simd, accum)
+                    })
+                    .reduce_sum();
+                // Naive algorithm for the remainder chunk
+                let remainder_result = v1_remainder
+                    .iter()
+                    .zip(v2_remainder)
+                    .fold(0., |accum, (&x1, &x2)| x1.mul_add(x2, accum));
+                chunk_result + remainder_result
+            }
+        }
+    }
+}
+
+#[inline]
+unsafe fn slice_to_simd_f32x8_unchecked(slice: &[f32]) -> f32x8 {
+    let mut array = [0.; 8];
+    for (i, elem) in array.iter_mut().enumerate() {
+        *elem = *slice.get_unchecked(i);        
+    }
+    f32x8::from(array)
+}
+
 // =============================================TESTS================================================
 
 #[cfg(test)]
@@ -475,7 +532,7 @@ mod tests {
 
     #[test]
     fn check_shape_and_size() {
-        let my_vector = Vector::from([0_f32, 1.0, 2.0, 3.0]);
+        let my_vector = Vector::from([0_f32, 1., 2., 3.]);
         assert_eq!(my_vector.shape(), (4,));
         assert_eq!(my_vector.size(), 4);
     }
@@ -526,25 +583,25 @@ mod tests {
 
     #[test]
     fn check_indexing() {
-        let my_vector = Vector::from([0_f32, 1.0, 2.0, 3.0]);
-        assert_eq!(my_vector[0], 0.0);
-        assert_eq!(my_vector[1], 1.0);
-        assert_eq!(my_vector[2], 2.0);
-        assert_eq!(my_vector[3], 3.0);
+        let my_vector = Vector::from([0_f32, 1., 2., 3.]);
+        assert_eq!(my_vector[0], 0.);
+        assert_eq!(my_vector[1], 1.);
+        assert_eq!(my_vector[2], 2.);
+        assert_eq!(my_vector[3], 3.);
         assert_eq!(my_vector[0..=1], [0., 1.]);
     }
 
     #[test]
     fn check_indexing_mut() {
-        let mut my_vector = Vector::from([0_f32, 1.0, 2.0, 3.0]);
+        let mut my_vector = Vector::from([0_f32, 1., 2., 3.]);
         my_vector[0] += 1.;
         my_vector[1] += 2.;
         my_vector[2] += 3.;
         my_vector[3] += 4.;
-        assert_eq!(my_vector[0], 1.0);
-        assert_eq!(my_vector[1], 3.0);
-        assert_eq!(my_vector[2], 5.0);
-        assert_eq!(my_vector[3], 7.0);
+        assert_eq!(my_vector[0], 1.);
+        assert_eq!(my_vector[1], 3.);
+        assert_eq!(my_vector[2], 5.);
+        assert_eq!(my_vector[3], 7.);
     }
 
     #[test]
@@ -552,7 +609,7 @@ mod tests {
         let mut my_array = (0..=10).map(|x| x as f32).collect::<Vec<f32>>();
         let my_vector1 = Vector::from(my_array.to_vec());
         let my_vector2 = Vector::from(my_array.to_vec());
-        my_array[0] += 1.0;
+        my_array[0] += 1.;
         let my_vector3 = Vector::from(my_array);
         assert_eq!(my_vector1, my_vector2);
         assert_ne!(my_vector1, my_vector3);
@@ -560,35 +617,35 @@ mod tests {
 
     #[test]
     fn check_addition() {
-        let my_vector1: Vector<f32> = Vector::from([0., 1.0, 2.0, 3.0]);
-        let my_vector2 = Vector::from([0., 1.0, 2.0, 3.0]);
+        let my_vector1: Vector<f32> = Vector::from([0., 1., 2., 3.]);
+        let my_vector2 = Vector::from([0., 1., 2., 3.]);
         let my_vector_result1 = &my_vector1 + &my_vector2;
 
-        assert_eq!(my_vector_result1, Vector::from([0_f32, 2.0, 4.0, 6.0]));
+        assert_eq!(my_vector_result1, Vector::from([0_f32, 2., 4., 6.]));
     }
 
     #[test]
     #[should_panic]
     fn check_addition_error() {
-        let my_vector1 = Vector::from([0_f32, 1.0, 2.0, 3.0]);
-        let my_vector2 = Vector::from([0_f32, 1.0, 2.0]);
+        let my_vector1 = Vector::from([0_f32, 1., 2., 3.]);
+        let my_vector2 = Vector::from([0_f32, 1., 2.]);
         let _ = &my_vector1 + &my_vector2;
     }
 
     #[test]
     fn check_substraction() {
-        let my_vector1 = Vector::from([0_f32, 1.0, 2.0, 3.0]);
-        let my_vector2 = Vector::from([0_f32, 1.0, 2.0, 3.0]);
+        let my_vector1 = Vector::from([0_f32, 1., 2., 3.]);
+        let my_vector2 = Vector::from([0_f32, 1., 2., 3.]);
         let my_vector_result = &my_vector1 - &my_vector2;
 
-        assert_eq!(my_vector_result, Vector::from([0_f32, 0.0, 0.0, 0.0]));
+        assert_eq!(my_vector_result, Vector::from([0_f32, 0., 0., 0.]));
     }
 
     #[test]
     #[should_panic]
     fn check_substraction_error() {
-        let my_vector1 = Vector::from([0_f32, 1.0, 2.0, 3.0]);
-        let my_vector2 = Vector::from([0_f32, 1.0, 2.0]);
+        let my_vector1 = Vector::from([0_f32, 1., 2., 3.]);
+        let my_vector2 = Vector::from([0_f32, 1., 2.]);
         let _ = &my_vector1 - &my_vector2;
     }
 
@@ -606,6 +663,8 @@ mod tests {
         // assert_eq!(my_vector_result2, my_vector2);
     }
 
+    // TODO: check cases linear combination should panic !
+
     #[test]
     fn check_linear_combination() {
         for n_vectors in 1..20 {
@@ -614,7 +673,7 @@ mod tests {
                 let vectors: Vec<Vector<f32>> = (0..n_vectors)
                     .map(|_| Vector::from_iter((0..vector_size).map(|x| x as f32)))
                     .collect();
-                let coefficients: Vec<f32> = vec![1.0; n_vectors];
+                let coefficients: Vec<f32> = vec![1.; n_vectors];
                 let result_should_be =
                     Vector::from_iter((0..vector_size).map(|x| (x * n_vectors) as f32));
                 let result = vectors.linear_combination(&coefficients);
@@ -638,6 +697,8 @@ mod tests {
         let v1: Vector<f32> = Vector::from_iter((0..10).map(|x| x as f32));
         let v2: Vector<f32> = Vector::from_iter((0..10).map(|x| x as f32));
 
-        assert_eq!(v1.dot_product(&v2), 285.0);
+        // TODO: Add better tests !
+
+        assert_eq!(v1.dot_product(&v2), 285.);
     }
 }

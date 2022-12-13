@@ -103,12 +103,29 @@ pub fn dot_product_i32_benchmark(c: &mut Criterion) {
     group.finish();
 }
 
+pub fn dot_product_f32_benchmark(c: &mut Criterion) {
+    let mut group = c.benchmark_group("dot_product_f32");
+    for i in [1, 2, 4, 6, 8, 10, 16, 25, 50, 75, 100, 250, 500, 750, 1000] {
+        let v1: Vector<f32> =
+            Vector::from(&((0..=i).map(|_| rand::random::<f32>()).collect::<Vec<f32>>()));
+        let v2 = Vector::from(&((0..=i).map(|_| rand::random::<f32>()).collect::<Vec<f32>>()));
+        group.bench_with_input(
+            BenchmarkId::new("dot_product_f32", i),
+            &(v1, v2),
+            |b, (v1, v2)| b.iter(|| v1.dot_product(v2)),
+        );
+    }
+    group.finish();
+}
+
+
 criterion_group!(
     name = benches;
     config = Criterion::default().with_plots().with_profiler(perf::FlamegraphProfiler::new(100));
     targets = //vector_add_benchmark,
     // linear_combination_f32_benchmark,
-    linear_combination_f32_short_benchmark,
+    dot_product_f32_benchmark,
+    // linear_combination_f32_short_benchmark,
     // linear_combination_i32_benchmark,
     // dot_product_i32_benchmark
 );

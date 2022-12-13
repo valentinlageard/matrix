@@ -32,9 +32,11 @@ Vector:
 - [x] Add constructors from various types
 - [x] Add iterator support
 - [x] Implement the LinearCombination trait on slices of vectors. The f32 implementation must use fma.
-- [x] Implement LinearInterpolation (must use fma for f32)
-- [ ] Implement dot product (must use fma for f32)
-    - [x] Generic dot product
-    - [ ] f32 fma dot product
+- [ ] Implement LinearInterpolation (must use fma for f32)
+    - [x] Generic implementation
+    - [x] f32 fma implementation
+- [x] Implement dot product (must use fma for f32)
 - [ ] Organiser le code en au moins 2 modules: Vector et Matrix
 - [ ] Séparer les unit tests dans des fichiers spéciaux
+- [ ] Find a better way to separate ints and floats in the traits LinearCombination, DotProduct, ...
+- [ ] Trouver un moyen d'automatiser la compilation avec les target features: fma, avx2, ...
