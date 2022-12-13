@@ -519,7 +519,7 @@ impl DotProduct for Vector<f32> {
 unsafe fn slice_to_simd_f32x8_unchecked(slice: &[f32]) -> f32x8 {
     let mut array = [0.; 8];
     for (i, elem) in array.iter_mut().enumerate() {
-        *elem = *slice.get_unchecked(i);        
+        *elem = *slice.get_unchecked(i);
     }
     f32x8::from(array)
 }
@@ -694,11 +694,26 @@ mod tests {
 
     #[test]
     fn check_dot_product() {
-        let v1: Vector<f32> = Vector::from_iter((0..10).map(|x| x as f32));
-        let v2: Vector<f32> = Vector::from_iter((0..10).map(|x| x as f32));
+        let expected_results = [
+            0, 1, 5, 14, 30, 55, 91, 140, 204, 285, 385, 506, 650, 819, 1015, 1240, 1496, 1785,
+            2109, 2470, 2870, 3311, 3795, 4324, 4900, 5525, 6201, 6930, 7714, 8555, 9455, 10416,
+            11440, 12529, 13685, 14910, 16206, 17575, 19019, 20540, 22140, 23821, 25585, 27434,
+            29370, 31395, 33511, 35720, 38024, 40425, 42925, 45526, 48230, 51039, 53955, 56980,
+            60116, 63365, 66729, 70210, 73810, 77531, 81375, 85344, 89440, 93665, 98021, 102510,
+            107134, 111895, 116795, 121836, 127020, 132349, 137825, 143450, 149226, 155155, 161239,
+            167480, 173880, 180441, 187165, 194054, 201110, 208335, 215731, 223300, 231044, 238965,
+            247065, 255346, 263810, 272459, 281295, 290320, 299536, 308945, 318549, 328350
+        ];
+        for i in 0..100 {
+            // Check for f32
+            let v1: Vector<f32> = Vector::from_iter((0..=i).map(|x| x as f32));
+            let v2 = Vector::from_iter((0..=i).map(|x| x as f32));
+            assert_eq!(v1.dot_product(&v2), expected_results[i] as f32);
 
-        // TODO: Add better tests !
-
-        assert_eq!(v1.dot_product(&v2), 285.);
+            // Check for default implementation
+            let v1: Vector<i32> = Vector::from_iter((0..=i).map(|x| x as i32));
+            let v2 = Vector::from_iter((0..=i).map(|x| x as i32));
+            assert_eq!(v1.dot_product(&v2), expected_results[i]);
+        }
     }
 }
