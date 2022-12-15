@@ -206,11 +206,7 @@ where
     type Output = Vector<T>;
 
     fn add(self, rhs: Self) -> Self::Output {
-        assert_eq!(
-            self.shape, rhs.shape,
-            "Shape mismatch: vector of shape {:?} can't be added to vector of shape {:?}",
-            self.shape, rhs.shape
-        );
+        assert_vector_shape_match(self, rhs);
         Vector {
             scalars: self
                 .scalars
@@ -231,11 +227,7 @@ where
     type Output = Vector<T>;
 
     fn sub(self, rhs: Self) -> Self::Output {
-        assert_eq!(
-            self.shape, rhs.shape,
-            "Shape mismatch: vector of shape {:?} can't be substracted to vector of shape {:?}",
-            self.shape, rhs.shape
-        );
+        assert_vector_shape_match(self, rhs);
         Vector {
             scalars: self
                 .scalars
@@ -265,31 +257,12 @@ where
     }
 }
 
-// Potential TODO: Make the mul operation commutative. Seems to require lots of boilerplate code (like below) oradvanced macros
-// impl Mul<&Vector<f32>> for f32
-// {
-//     type Output = Vector<f32>;
-
-//     fn mul(self, rhs: &Vector<f32>) -> Self::Output {
-//         rhs * self
-//     }
-// }
-
-// This would be cool but it doesn't work in rust...
-// See RFC 2451
-// impl<T> Mul<&Vector<T>> for T {
-//     type Output = Vector<T>;
-
-//     fn mul(self, rhs: &Vector<T>) -> Self::Output {
-//         rhs * self
-//     }
-// }
-
 // =======================================LINEAR ALGEBRA============================================
 
 /// A trait for linear combination
 ///
-/// This trait allows to "specialize" the behaviour on &\[Vector\<f32\>\] so we can use fma operations
+/// This trait allows to "specialize" the behaviour on &\[Vector\<f32\>\] so we can use fma
+/// operations
 pub trait LinearCombination<'a> {
     /// The coefficients type
     type Coefficients;
@@ -323,21 +296,14 @@ where
             self.len(),
             coefficients.len()
         );
-        let vector_shape = self[0].shape();
         for vector in self {
-            assert_eq!(
-                vector.shape(),
-                vector_shape,
-                "Shape mismatch: vector of shape {:?} can't be combined to vector of shape {:?}",
-                vector.shape(),
-                vector_shape
-            )
+            assert_vector_shape_match(&self[0], vector);
         }
 
         // Create the result vector initialized with default values (0 for number types)
         let result = Vector {
-            scalars: vec![T::default(); vector_shape.0],
-            shape: vector_shape,
+            scalars: vec![T::default(); self[0].size()],
+            shape: self[0].shape(),
         };
 
         // Compute scaled vectors
@@ -371,15 +337,8 @@ impl<'a> LinearCombination<'a> for [Vector<f32>] {
             self.len(),
             coefficients.len()
         );
-        let vector_size = self[0].size();
         for vector in self {
-            assert_eq!(
-                vector.size(),
-                vector_size,
-                "Shape mismatch: vector of shape {:?} can't be combined to vector of shape {:?}",
-                vector.size(),
-                vector_size
-            )
+            assert_vector_shape_match(&self[0], vector);
         }
 
         const N_LANES: usize = 8;
@@ -408,17 +367,11 @@ impl<'a> LinearCombination<'a> for [Vector<f32>] {
                 f32x8::splat(0.),
                 |accum, (coeff, vector)| {
                     let packed_coefficient = f32x8::splat(*coeff);
-                    // SAFETY: The vector slice is guaranteed to be valid because I did my math fine when computing the slice index
-                    // In addition, the beginning of the function asserts the vectors size
+                    // SAFETY: The vector slice is guaranteed to be valid because I did my pointer
+                    // arithmetics fine when computing the slice index.  In addition, the beginning
+                    // of the function asserts the vectors size
                     let vec_slice = unsafe { &vector.scalars.get_unchecked(slice_idx..) };
-                    let packed_vec = unsafe {
-                        slice_to_simd_f32x8_unchecked(vec_slice)
-                        // let mut array = [0.; N_LANES];
-                        // for i in 0..N_LANES {
-                        //     array[i] = *vec_slice.get_unchecked(i);
-                        // }
-                        // f32x8::from(array)
-                    };
+                    let packed_vec = unsafe { slice_to_simd_f32x8_unchecked(vec_slice) };
                     packed_vec.mul_add(packed_coefficient, accum)
                 },
             );
@@ -453,13 +406,8 @@ where
     type Output = T;
 
     fn dot_product(&self, rhs: &Self) -> Self::Output {
-        assert_eq!(
-            self.shape(),
-            rhs.shape(),
-            "Shape mismatch: vector of shape {:?} can't be combined to vector of shape {:?}",
-            self.shape(),
-            rhs.shape()
-        );
+        assert_vector_shape_match(self, rhs);
+
         self.scalars
             .iter()
             .zip(rhs.scalars.iter())
@@ -471,15 +419,10 @@ impl DotProduct for Vector<f32> {
     type Output = f32;
 
     fn dot_product(&self, rhs: &Self) -> Self::Output {
-        assert_eq!(
-            self.shape(),
-            rhs.shape(),
-            "Shape mismatch: vector of shape {:?} can't be combined to vector of shape {:?}",
-            self.shape(),
-            rhs.shape()
-        );
+        assert_vector_shape_match(self, rhs);
 
-        // The naive algorithm is more efficient than the fma optimized one for vectors with size less than 16
+        // The naive algorithm is more efficient than the fma optimized one for vectors with size
+        // less than 16 so we select the algorithm based on the vector size
         match self.size().cmp(&16) {
             // Naive algorithm
             Ordering::Less => self
@@ -515,6 +458,139 @@ impl DotProduct for Vector<f32> {
     }
 }
 
+pub trait LinearInterpolation {
+    type Output;
+
+    fn lerp(self, rhs: Self, t: f32) -> Self::Output;
+}
+
+/// Linear interpolation for scalar types
+impl<T> LinearInterpolation for T
+where
+    T: Add<Output = T> + Mul<f32, Output = T>,
+{
+    type Output = T;
+
+    fn lerp(self, rhs: Self, t: f32) -> Self::Output {
+        self * (1. - t) + rhs * t
+    }
+}
+
+/// Linear interpolation for vector types
+///
+/// No specialization for f32 has been stabilized as the compiler vectorizes and unrolls
+/// aggressively resulting in a better algorithm than anything I tried
+impl<'a, T> LinearInterpolation for &'a Vector<T>
+where
+    T: Copy + Add<Output = T> + Mul<f32, Output = T>,
+{
+    type Output = Vector<T>;
+
+    fn lerp(self, rhs: Self, t: f32) -> Self::Output {
+        assert_vector_shape_match(self, rhs);
+        Vector {
+            scalars: self
+                .scalars
+                .iter()
+                .zip(rhs.scalars.iter())
+                .map(|(&x1, &x2)| x1 * (1.0 - t) + x2 * t)
+                .collect(),
+            shape: self.shape(),
+        }
+    }
+}
+
+// /// Fma optimized implementation for f32 vector types (isn't better that what the compiler does)
+// impl<'a> LinearInterpolation for &'a Vector<f32> {
+//     type Output = Vector<f32>;
+
+//     fn lerp(self, rhs: Self, t: f32) -> Self::Output {
+//         // TODO: Check vector sizes !
+
+//         const N_LANES: usize = 8;
+//         // Create the vector to store the result (and the partial computations !)
+//         let mut result_vector = Vector {
+//             scalars: vec![0.0f32; self.size()],
+//             shape: self.shape(),
+//         };
+
+//         let (res_prefix, res_middle, res_suffix) =
+// result_vector.scalars.as_simd_mut::<N_LANES>();         let middle_start_idx = res_prefix.len();
+//         let suffix_start_idx = res_prefix.len() + res_middle.len() * N_LANES;
+
+//         for ((x1, x2), res_scalar) in self.scalars.iter().zip(rhs.scalars.iter()).zip(res_prefix)
+// {             *res_scalar = x1 * (1.0 - t) + x2 * t;
+//         }
+
+//         let packed_t = f32x8::splat(t);
+//         let packed_one_minus_t = f32x8::splat(1.0 - t);
+//         for (i, packed_res) in res_middle.iter_mut().enumerate() {
+//             let slice_idx = middle_start_idx.wrapping_add(i.wrapping_mul(N_LANES));
+//             // SAFETY: We already check the vectors size and our pointer arithmetic is right
+//             let slice_x1 = unsafe { self.scalars.get_unchecked(slice_idx..) };
+//             let slice_x2 = unsafe { rhs.scalars.get_unchecked(slice_idx..) };
+//             let packed_x1 = unsafe { slice_to_simd_f32x8_unchecked(slice_x1) };
+//             let packed_x2 = unsafe { slice_to_simd_f32x8_unchecked(slice_x2) };
+//             *packed_res = packed_t.mul_add(packed_x2, (packed_one_minus_t) * packed_x1);
+//         }
+
+//         for (i, res_scalar) in res_suffix.iter_mut().enumerate() {
+//             // SAFETY: We already check the vectors size and our pointer arithmetic is right
+//             let x1 = unsafe { self.scalars.get_unchecked(suffix_start_idx + i) };
+//             let x2 = unsafe { rhs.scalars.get_unchecked(suffix_start_idx + i) };
+//             *res_scalar = x1 * (1.0 - t) + x2 * t;
+//         }
+
+//         // // TODO: Performance isn't stable and isn't always better than naive implementation...
+//         // // Chunkize the input vectors and the result vector
+//         // let v1_chunks = self.scalars.chunks_exact(N_LANES);
+//         // let v2_chunks = rhs.scalars.chunks_exact(N_LANES);
+//         // // Maybe we could use something else than as_chunks_mut ?
+//         // let (result_vector_chunks, result_vector_remainder) =
+//         //     result_vector.scalars.as_chunks_mut::<N_LANES>();
+//         // let v1_remainder = v1_chunks.remainder();
+//         // let v2_remainder = v2_chunks.remainder();
+//         // // Broadcast the interpolator value to a simd vector
+//         // let packed_t = f32x8::splat(t);
+//         // let packed_one_minus_t = f32x8::splat(1.0 - t);
+
+//         // // For each chunk, use packed fma
+//         // v1_chunks.zip(v2_chunks).zip(result_vector_chunks).for_each(
+//         //     |((v1_chunk, v2_chunk), packed_res)| {
+//         //         let packed_x1 = unsafe { slice_to_simd_f32x8_unchecked(v1_chunk) };
+//         //         let packed_x2 = unsafe { slice_to_simd_f32x8_unchecked(v2_chunk) };
+//         //         // let mut simdres = unsafe { slice_to_simd_f32x8_unchecked(res_chunk) };
+//         //         *packed_res = packed_t.mul_add(packed_x2, (packed_one_minus_t) *
+// packed_x1).into();         //         // *res_chunk = t_simd.mul_add(simd2,
+// -t_simd.mul_add(simd1, -simd1)).into();         //     },
+//         // );
+
+//         // // For the remainder, use scalar fma
+//         // v1_remainder
+//         //     .iter()
+//         //     .zip(v2_remainder.iter())
+//         //     .zip(result_vector_remainder)
+//         //     .for_each(|((&x1, &x2), res)| *res = x1 * (1.0 - t) + x2 * t);
+
+//         result_vector
+//     }
+// }
+
+// TODO: Implement LinearInterpolation for Matrix<T: Int> et Matrix<f32>
+
+// ==============================================UTILS==============================================
+
+#[inline]
+fn assert_vector_shape_match<T: Copy>(v1: &Vector<T>, v2: &Vector<T>) {
+    assert_eq!(
+        v1.shape(),
+        v2.shape(),
+        "Shape mismatch: vector of shape {:?} can't be combined to vector of shape {:?}",
+        v1.shape(),
+        v2.shape()
+    );
+}
+
 #[inline]
 unsafe fn slice_to_simd_f32x8_unchecked(slice: &[f32]) -> f32x8 {
     let mut array = [0.; 8];
@@ -524,7 +600,7 @@ unsafe fn slice_to_simd_f32x8_unchecked(slice: &[f32]) -> f32x8 {
     f32x8::from(array)
 }
 
-// =============================================TESTS================================================
+// ==============================================TESTS==============================================
 
 #[cfg(test)]
 mod tests {
@@ -656,8 +732,8 @@ mod tests {
         let my_vector1 = Vector::from(my_array1);
         let my_vector2 = Vector::from(my_array2);
         let my_vector_result1 = &my_vector1 * 2_f32;
-        // The following line doesn't compile because the operator can't be commutatively implemented
-        // let my_vector_result2 = 2_f32 * &my_vector1;
+        // The following line doesn't compile because the operator can't be commutatively
+        // implemented let my_vector_result2 = 2_f32 * &my_vector1;
 
         assert_eq!(my_vector_result1, my_vector2);
         // assert_eq!(my_vector_result2, my_vector2);
@@ -702,7 +778,7 @@ mod tests {
             60116, 63365, 66729, 70210, 73810, 77531, 81375, 85344, 89440, 93665, 98021, 102510,
             107134, 111895, 116795, 121836, 127020, 132349, 137825, 143450, 149226, 155155, 161239,
             167480, 173880, 180441, 187165, 194054, 201110, 208335, 215731, 223300, 231044, 238965,
-            247065, 255346, 263810, 272459, 281295, 290320, 299536, 308945, 318549, 328350
+            247065, 255346, 263810, 272459, 281295, 290320, 299536, 308945, 318549, 328350,
         ];
         for i in 0..100 {
             // Check for f32
@@ -714,6 +790,26 @@ mod tests {
             let v1: Vector<i32> = Vector::from_iter((0..=i).map(|x| x as i32));
             let v2 = Vector::from_iter((0..=i).map(|x| x as i32));
             assert_eq!(v1.dot_product(&v2), expected_results[i]);
+        }
+    }
+
+    // TODO: Check cases where dot product should panic !
+
+    #[test]
+    fn check_linear_interpolation() {
+        for vector_size in 1..=1000 {
+            let v1 = Vector::from_iter((0..vector_size).map(|x| x as f32));
+            let v2 = Vector::from_iter((0..vector_size).map(|x| (x + 1) as f32));
+
+            let result = v1.lerp(&v2, 0.0);
+            assert_eq!(result, v1);
+
+            let result = v1.lerp(&v2, 1.0);
+            assert_eq!(result, v2);
+
+            let expected_result = Vector::from_iter((0..vector_size).map(|x| x as f32 + 0.5));
+            let result = v1.lerp(&v2, 0.5);
+            assert_eq!(result, expected_result);
         }
     }
 }
