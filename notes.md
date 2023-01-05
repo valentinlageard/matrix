@@ -25,18 +25,44 @@
 
 Generalities:
 - [x] Set up a benchmark environment to test complexity and optimizations.
+- [x] Organiser le code en au moins 2 modules: Vector et Matrix
+- [ ] Séparer les unit tests dans des fichiers spéciaux
+- [ ] Find a better way to separate ints and floats in the traits LinearCombination, DotProduct, ...
+- [ ] Trouver un moyen d'automatiser la compilation avec les target features: fma, avx2, ...
+- [ ] Reimplement everything for complex vector spaces
 
 Vector:
-- [x] Create a vector struct with basic operations: add, mul, sub, scale.
+- [x] Create a vector struct with basic operations: add, sub, scale.
 - [x] Add indexing support
 - [x] Add constructors from various types
 - [x] Add iterator support
 - [x] Implement the LinearCombination trait on slices of vectors. The f32 implementation must use fma.
-- [ ] Implement LinearInterpolation (must use fma for f32)
-    - [x] Generic implementation
-    - [x] f32 fma implementation
 - [x] Implement dot product (must use fma for f32)
-- [ ] Organiser le code en au moins 2 modules: Vector et Matrix
-- [ ] Séparer les unit tests dans des fichiers spéciaux
-- [ ] Find a better way to separate ints and floats in the traits LinearCombination, DotProduct, ...
-- [ ] Trouver un moyen d'automatiser la compilation avec les target features: fma, avx2, ...
+- [ ] Implement LinearInterpolation
+    - [x] Scalar implementation
+    - [x] Vector implementation
+- [ ] Implement norm
+- [ ] Implement cosine
+- [ ] Implement cross product
+- [x] Implement reshape to a Matrix
+
+Matrix
+- [ ] Add indexing support
+- [x] Add constructors:
+    - [x] from a vector and a shape
+    - [x] from a shape and a function that takes row and col indices
+- [ ] Add iterator support
+- [ ] Implement basic operations:
+    - [ ] Add
+    - [ ] Sub
+    - [ ] Scale
+- [ ] Implement matrix multiplication
+    - [ ] With a vector
+    - [ ] With a matrix
+- [ ] Implement trace
+- [ ] Implement transpose
+- [ ] Implement reduced row echelon form
+- [ ] Implement determinant
+- [ ] Implement inverse
+- [ ] Implement rank
+- [ ] (Optional) Implement projection matrix

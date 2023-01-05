@@ -5,6 +5,8 @@ use std::simd::{f32x8, SimdFloat, StdFloat};
 use std::slice;
 use std::slice::SliceIndex;
 
+use crate::matrix::Matrix;
+
 pub trait Int {}
 pub trait Float {}
 
@@ -27,14 +29,9 @@ pub struct Vector<T>
 where
     T: Copy,
 {
-    pub scalars: Vec<T>,
-    pub shape: (usize,),
+    scalars: Vec<T>,
+    shape: (usize,),
 }
-
-// struct Matrix<T> {
-//     scalars: Vec<T>,
-//     shape: (usize, usize),
-// }
 
 impl<T> Vector<T>
 where
@@ -58,6 +55,20 @@ where
     /// Returns a mutable iterator on the vector's scalars
     pub fn iter_mut(&mut self) -> slice::IterMut<T> {
         self.scalars.iter_mut()
+    }
+
+    pub fn reshape(self, shape: (usize, usize)) -> Matrix<T> {
+        assert_eq!(
+            shape.0 * shape.1,
+            self.size(),
+            "Vector of size {:?} can't be reshaped into matrix of shape {:?}",
+            self.size(),
+            shape
+        );
+        Matrix {
+            scalars: self.scalars,
+            shape
+        }
     }
 }
 
